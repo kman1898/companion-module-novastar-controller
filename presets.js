@@ -2,20 +2,25 @@ import { combineRgb } from '@companion-module/base'
 import * as nova_config from './choices.js'
 
 /**
- * Build dynamic preset definitions based on the selected processor model.
- * Only presets for actions available on the selected processor are generated.
+ * Build preset definitions and structure for API 2.0.
+ * Returns { structure, presets } for two-arg setPresetDefinitions(structure, presets).
+ *
+ * NOTE on templates: Per battle-tested migration guide, style cannot vary per template
+ * value. Brightness presets need different colors per level, so they use individual
+ * presets, not templates. Processor presets (Preset 1-N) are good template candidates
+ * since they share identical styling.
  */
 export function getPresets(instance) {
 	const presets = {}
+	const structure = []
 	const model = instance.model
 
-	if (!model) return presets
+	if (!model) return { structure, presets }
 
 	const WHITE = combineRgb(255, 255, 255)
 	const BLACK = combineRgb(0, 0, 0)
 	const RED = combineRgb(255, 0, 0)
 	const BLUE = combineRgb(0, 0, 255)
-	const ORANGE = combineRgb(255, 128, 0)
 	const DARK_RED = combineRgb(128, 0, 0)
 	const DARK_BLUE = combineRgb(0, 0, 128)
 	const GREY = combineRgb(64, 64, 64)
@@ -23,13 +28,16 @@ export function getPresets(instance) {
 	// ======================== DISPLAY MODES ========================
 
 	if (model.displayModes) {
+		const dmSection = { id: 'display_modes', name: 'Display Mode', definitions: [] }
+		const dmPresetIds = []
+
 		model.displayModes.forEach((dm) => {
 			const isBlack = dm.label.toLowerCase().includes('black') || dm.label.toLowerCase().includes('ftb')
 			const isFreeze = dm.label.toLowerCase().includes('freeze')
+			const pid = `display_mode_${dm.id}`
 
-			presets[`display_mode_${dm.id}`] = {
-				type: 'button',
-				category: 'Display Mode',
+			presets[pid] = {
+				type: 'simple',
 				name: dm.label,
 				style: {
 					text: dm.label,
@@ -38,9 +46,7 @@ export function getPresets(instance) {
 					bgcolor: isBlack ? DARK_RED : isFreeze ? DARK_BLUE : BLACK,
 				},
 				steps: [
-					{
-						down: [{ actionId: 'change_display_mode', options: { display_mode: dm.id } }],
-					},
+					{ down: [{ actionId: 'change_display_mode', options: { display_mode: dm.id } }] },
 				],
 				feedbacks: [
 					{
@@ -50,6 +56,7 @@ export function getPresets(instance) {
 					},
 				],
 			}
+			dmPresetIds.push(pid)
 		})
 
 		// FTB toggle
@@ -61,8 +68,7 @@ export function getPresets(instance) {
 
 		if (normalMode && blackMode) {
 			presets['toggle_ftb'] = {
-				type: 'button',
-				category: 'Display Mode',
+				type: 'simple',
 				name: 'FTB Toggle',
 				style: { text: 'FTB\\nToggle', size: '18', color: WHITE, bgcolor: DARK_RED },
 				steps: [
@@ -77,12 +83,12 @@ export function getPresets(instance) {
 					},
 				],
 			}
+			dmPresetIds.push('toggle_ftb')
 		}
 
 		if (normalMode && freezeMode) {
 			presets['toggle_freeze'] = {
-				type: 'button',
-				category: 'Display Mode',
+				type: 'simple',
 				name: 'Freeze Toggle',
 				style: { text: 'Freeze\\nToggle', size: '18', color: WHITE, bgcolor: DARK_BLUE },
 				steps: [
@@ -97,81 +103,110 @@ export function getPresets(instance) {
 					},
 				],
 			}
+			dmPresetIds.push('toggle_freeze')
 		}
+
+		dmSection.definitions.push({
+			id: 'dm_group', type: 'simple', name: 'Display Modes',
+			presets: dmPresetIds,
+		})
+		structure.push(dmSection)
 	}
 
 	// ======================== BRIGHTNESS ========================
+	// Template: all buttons same style, feedback highlights the active level
 
 	if (model.brightness) {
-		for (let pct = 0; pct <= 100; pct += 10) {
-			const intensity = Math.round((pct / 100) * 200) + 55
-			const bg = pct === 0 ? GREY : pct === 100 ? WHITE : combineRgb(intensity, intensity, 0)
-			const fg = pct >= 75 ? BLACK : WHITE
+		const brightSection = { id: 'brightness', name: 'Brightness', definitions: [] }
 
-			presets[`brightness_${pct}`] = {
-				type: 'button',
-				category: 'Brightness',
-				name: `Brightness ${pct}%`,
-				style: {
-					text: `${pct}%`,
-					size: '24',
-					color: fg,
-					bgcolor: bg,
+		// Template definition — one preset, stamped for each level
+		presets['tpl_brightness'] = {
+			type: 'simple',
+			name: 'Brightness Level',
+			localVariables: [
+				{ variableName: 'level', variableType: 'simple', startupValue: 100 },
+			],
+			style: {
+				text: '$(local:level)%',
+				size: '24',
+				color: WHITE,
+				bgcolor: BLACK,
+			},
+			steps: [
+				{
+					down: [{
+						actionId: 'set_brightness',
+						options: {
+							mode: 'S',
+							which: 'O',
+							value: { value: '$(local:level)', isExpression: true },
+							adj: '0',
+						},
+					}],
 				},
-				steps: [
-					{
-						down: [
-							{
-								actionId: 'set_brightness',
-								options: { mode: 'S', which: 'O', value: String(pct), adj: '0' },
-							},
-						],
+			],
+			feedbacks: [
+				{
+					feedbackId: 'brightness_match',
+					options: {
+						brightness: { value: '$(local:level)', isExpression: true },
 					},
-				],
-				feedbacks: [
-					{
-						feedbackId: 'brightness_match',
-						options: { brightness: pct },
-						style: { bgcolor: combineRgb(255, 0, 0), color: WHITE },
-					},
-				],
-			}
+					style: { bgcolor: combineRgb(255, 0, 0), color: WHITE },
+				},
+			],
 		}
 
+		const brightValues = []
+		for (let pct = 0; pct <= 100; pct += 10) {
+			brightValues.push({ name: `${pct}%`, value: pct })
+		}
+
+		brightSection.definitions.push({
+			id: 'brightness_levels', type: 'template', name: 'Brightness Levels',
+			presetId: 'tpl_brightness',
+			templateVariableName: 'level',
+			templateValues: brightValues,
+		})
+
+		// Brightness adjust buttons
 		presets['brightness_up'] = {
-			type: 'button',
-			category: 'Brightness',
+			type: 'simple',
 			name: 'Brightness +5%',
 			style: { text: 'Bright\\n+5%', size: 'auto', color: WHITE, bgcolor: BLACK },
 			steps: [
-				{
-					down: [{ actionId: 'set_brightness', options: { mode: 'A', which: 'O', value: '0', adj: '5' } }],
-				},
+				{ down: [{ actionId: 'set_brightness', options: { mode: 'A', which: 'O', value: '0', adj: '5' } }] },
 			],
 			feedbacks: [],
 		}
 
 		presets['brightness_down'] = {
-			type: 'button',
-			category: 'Brightness',
+			type: 'simple',
 			name: 'Brightness -5%',
 			style: { text: 'Bright\\n-5%', size: 'auto', color: WHITE, bgcolor: BLACK },
 			steps: [
-				{
-					down: [{ actionId: 'set_brightness', options: { mode: 'A', which: 'O', value: '0', adj: '-5' } }],
-				},
+				{ down: [{ actionId: 'set_brightness', options: { mode: 'A', which: 'O', value: '0', adj: '-5' } }] },
 			],
 			feedbacks: [],
 		}
+
+		brightSection.definitions.push({
+			id: 'brightness_adjust', type: 'simple', name: 'Adjust',
+			presets: ['brightness_up', 'brightness_down'],
+		})
+
+		structure.push(brightSection)
 	}
 
 	// ======================== INPUTS ========================
 
 	if (model.inputs) {
+		const inputSection = { id: 'inputs', name: 'Inputs', definitions: [] }
+		const inputPresetIds = []
+
 		model.inputs.forEach((input) => {
-			presets[`input_${input.id}`] = {
-				type: 'button',
-				category: 'Inputs',
+			const pid = `input_${input.id}`
+			presets[pid] = {
+				type: 'simple',
 				name: input.label,
 				style: { text: input.label, size: 'auto', color: WHITE, bgcolor: BLACK },
 				steps: [
@@ -185,17 +220,27 @@ export function getPresets(instance) {
 					},
 				],
 			}
+			inputPresetIds.push(pid)
 		})
+
+		inputSection.definitions.push({
+			id: 'input_group', type: 'simple', name: 'Input Sources',
+			presets: inputPresetIds,
+		})
+		structure.push(inputSection)
 	}
 
 	// ======================== PRESETS ========================
 
 	if (model.presets) {
+		const presetSection = { id: 'presets', name: 'Presets', definitions: [] }
+		const presetIds = []
+
 		model.presets.forEach((p, index) => {
 			const presetNum = index + 1
-			presets[`preset_${p.id}`] = {
-				type: 'button',
-				category: 'Presets',
+			const pid = `preset_${p.id}`
+			presets[pid] = {
+				type: 'simple',
 				name: p.label,
 				style: {
 					text: `Preset\\n${presetNum}`,
@@ -214,16 +259,26 @@ export function getPresets(instance) {
 					},
 				],
 			}
+			presetIds.push(pid)
 		})
+
+		presetSection.definitions.push({
+			id: 'preset_group', type: 'simple', name: 'Load Presets',
+			presets: presetIds,
+		})
+		structure.push(presetSection)
 	}
 
 	// ======================== WORKING MODES ========================
 
 	if (model.workingModes) {
+		const wmSection = { id: 'working_modes', name: 'Working Mode', definitions: [] }
+		const wmIds = []
+
 		model.workingModes.forEach((wm) => {
-			presets[`working_mode_${wm.id}`] = {
-				type: 'button',
-				category: 'Working Mode',
+			const pid = `working_mode_${wm.id}`
+			presets[pid] = {
+				type: 'simple',
 				name: wm.label,
 				style: { text: wm.label, size: '18', color: WHITE, bgcolor: combineRgb(64, 0, 128) },
 				steps: [
@@ -237,16 +292,26 @@ export function getPresets(instance) {
 					},
 				],
 			}
+			wmIds.push(pid)
 		})
+
+		wmSection.definitions.push({
+			id: 'wm_group', type: 'simple', name: 'Working Modes',
+			presets: wmIds,
+		})
+		structure.push(wmSection)
 	}
 
 	// ======================== PIP ON/OFF ========================
 
 	if (model.pipOnOffs) {
+		const pipSection = { id: 'pip', name: 'PIP', definitions: [] }
+		const pipIds = []
+
 		model.pipOnOffs.forEach((pip) => {
-			presets[`pip_${pip.id}`] = {
-				type: 'button',
-				category: 'PIP',
+			const pid = `pip_${pip.id}`
+			presets[pid] = {
+				type: 'simple',
 				name: pip.label,
 				style: { text: `PIP\\n${pip.label}`, size: '18', color: WHITE, bgcolor: BLACK },
 				steps: [
@@ -254,40 +319,62 @@ export function getPresets(instance) {
 				],
 				feedbacks: [],
 			}
+			pipIds.push(pid)
 		})
+
+		pipSection.definitions.push({
+			id: 'pip_group', type: 'simple', name: 'PIP Controls',
+			presets: pipIds,
+		})
+		structure.push(pipSection)
 	}
 
 	// ======================== TEST PATTERNS ========================
 
-	nova_config.CHOICES_TESTPATTERNS.forEach((tp) => {
-		const isOff = tp.label.toLowerCase().includes('off')
-		const label = tp.label.toLowerCase()
-		const needsSmallFont = label.includes('horizontal') || label.includes('diagonal')
+	{
+		const tpSection = { id: 'test_patterns', name: 'Test Patterns', definitions: [] }
+		const tpIds = []
 
-		presets[`test_pattern_${tp.id}`] = {
-			type: 'button',
-			category: 'Test Patterns',
-			name: tp.label,
-			style: {
-				text: `Test\\n${tp.label}`,
-				size: needsSmallFont ? '14' : '18',
-				color: WHITE,
-				bgcolor: isOff ? DARK_RED : combineRgb(0, 64, 0),
-			},
-			steps: [
-				{ down: [{ actionId: 'change_test_pattern', options: { pattern: tp.id } }] },
-			],
-			feedbacks: [],
-		}
-	})
+		nova_config.CHOICES_TESTPATTERNS.forEach((tp) => {
+			const isOff = tp.label.toLowerCase().includes('off')
+			const label = tp.label.toLowerCase()
+			const needsSmallFont = label.includes('horizontal') || label.includes('diagonal')
+			const pid = `test_pattern_${tp.id}`
+
+			presets[pid] = {
+				type: 'simple',
+				name: tp.label,
+				style: {
+					text: `Test\\n${tp.label}`,
+					size: needsSmallFont ? '14' : '18',
+					color: WHITE,
+					bgcolor: isOff ? DARK_RED : combineRgb(0, 64, 0),
+				},
+				steps: [
+					{ down: [{ actionId: 'change_test_pattern', options: { pattern: tp.id } }] },
+				],
+				feedbacks: [],
+			}
+			tpIds.push(pid)
+		})
+
+		tpSection.definitions.push({
+			id: 'tp_group', type: 'simple', name: 'Test Patterns',
+			presets: tpIds,
+		})
+		structure.push(tpSection)
+	}
 
 	// ======================== SCALING ========================
 
 	if (model.scaling) {
+		const scaleSection = { id: 'scaling', name: 'Scaling', definitions: [] }
+		const scaleIds = []
+
 		nova_config.CHOICES_SCALING.forEach((s) => {
-			presets[`scaling_${s.id}`] = {
-				type: 'button',
-				category: 'Scaling',
+			const pid = `scaling_${s.id}`
+			presets[pid] = {
+				type: 'simple',
 				name: s.label,
 				style: { text: s.label, size: '18', color: WHITE, bgcolor: BLACK },
 				steps: [
@@ -295,15 +382,24 @@ export function getPresets(instance) {
 				],
 				feedbacks: [],
 			}
+			scaleIds.push(pid)
 		})
+
+		scaleSection.definitions.push({
+			id: 'scale_group', type: 'simple', name: 'Scaling',
+			presets: scaleIds,
+		})
+		structure.push(scaleSection)
 	}
 
 	// ======================== VX6s SWITCHER ========================
 
 	if (instance.config.modelID == 'vx6s') {
+		const switcherSection = { id: 'switcher', name: 'Switcher', definitions: [] }
+		const switcherIds = []
+
 		presets['take'] = {
-			type: 'button',
-			category: 'Switcher',
+			type: 'simple',
 			name: 'TAKE',
 			style: { text: 'TAKE', size: '24', color: WHITE, bgcolor: RED },
 			steps: [
@@ -311,13 +407,14 @@ export function getPresets(instance) {
 			],
 			feedbacks: [],
 		}
+		switcherIds.push('take')
 
 		if (model.presets) {
 			model.presets.forEach((p, index) => {
 				const presetNum = index + 1
-				presets[`preset_take_${p.id}`] = {
-					type: 'button',
-					category: 'Preset + Take',
+				const pid = `preset_take_${p.id}`
+				presets[pid] = {
+					type: 'simple',
 					name: `Preset ${presetNum} + Take`,
 					style: { text: `Preset\\n${presetNum}\\nTAKE`, size: '14', color: WHITE, bgcolor: combineRgb(128, 0, 0) },
 					steps: [
@@ -336,9 +433,16 @@ export function getPresets(instance) {
 						},
 					],
 				}
+				switcherIds.push(pid)
 			})
 		}
+
+		switcherSection.definitions.push({
+			id: 'switcher_group', type: 'simple', name: 'Switcher',
+			presets: switcherIds,
+		})
+		structure.push(switcherSection)
 	}
 
-	return presets
+	return { structure, presets }
 }

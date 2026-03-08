@@ -1,5 +1,5 @@
 // NovaStar-Controller
-import { InstanceBase, TCPHelper, runEntrypoint, InstanceStatus } from '@companion-module/base'
+import { InstanceBase, TCPHelper, InstanceStatus } from '@companion-module/base'
 import * as actions from './actions.js'
 import * as nova_config from './choices.js'
 import { getPresets } from './presets.js'
@@ -97,7 +97,8 @@ class NovaStarInstance extends InstanceBase {
 	}
 
 	updatePresets() {
-		this.setPresetDefinitions(getPresets(this))
+		const { structure, presets } = getPresets(this)
+		this.setPresetDefinitions(structure, presets)
 	}
 
 	updateFeedbacks() {
@@ -609,7 +610,14 @@ class NovaStarInstance extends InstanceBase {
 			msg[3] = msgId
 			msg = Buffer.concat([msg, this.getCommandChecksum(msg)])
 			this.log('debug', `==> ${isQuery ? ' request ' : ''}${this.toHexString(msg, ':')}`)
-			await this.socket.send(msg)
+			try {
+				await this.socket.send(msg)
+			} catch (err) {
+				this.log('warn', `TCP send error: ${err.message}`)
+				this.updateStatus(InstanceStatus.ConnectionFailure)
+				resolve('')
+				return
+			}
 			this.socket.once(`response${msgId}`, async (msg) => {
 				data = this.msgData(msg)
 				this.log('debug', `<== ${this.toHexString(msg, ':')}\n`)
@@ -664,4 +672,5 @@ class NovaStarInstance extends InstanceBase {
 	}
 }
 
-runEntrypoint(NovaStarInstance, [])
+export default NovaStarInstance
+export const UpgradeScripts = []

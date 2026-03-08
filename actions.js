@@ -148,6 +148,7 @@ export const getActions = function (instance) {
 				label: 'Set / Adjust',
 				id: 'mode',
 				default: 'S',
+				disableAutoExpression: true,
 				choices: [
 					{ id: 'A', label: 'Adjust +/- Value' },
 					{ id: 'S', label: 'Set Direct Value' },
@@ -170,9 +171,7 @@ export const getActions = function (instance) {
 				type: 'textinput',
 				label: 'Value (0-100)',
 				id: 'value',
-				isVisible: (options, data) => {
-					return options.mode === 'S'
-				},
+				isVisibleExpression: '$(options:mode) == "S"',
 				default: 0,
 				useVariables: true,
 				regex: Regex.FLOAT,
@@ -183,16 +182,14 @@ export const getActions = function (instance) {
 				label: 'By (+/-) ',
 				id: 'adj',
 				default: 0,
-				isVisible: (options, data) => {
-					return options.mode === 'A'
-				},
+				isVisibleExpression: '$(options:mode) == "A"',
 				useVariables: true,
 				regex: Regex.SIGNED_FLOAT,
 			},
 		],
-		callback: async (event, context) => {
-			const val = parseFloat(await context.parseVariablesInString(event.options.value))
-			const aVal = parseFloat(await context.parseVariablesInString(event.options.adj)) || 0
+		callback: async (event) => {
+			const val = parseFloat(event.options.value)
+			const aVal = parseFloat(event.options.adj) || 0
 			const which = event.options.which || 'O'
 			let wb = 'brite' + (which == 'O' ? '' : '_' + which.toLowerCase())
 
@@ -275,7 +272,7 @@ export const getActions = function (instance) {
 		let element = pat_list.find((element) => element.id == which)
 
 		if (element == undefined) {
-			which = parseInt(await ctx.parseVariablesInString(event.options.pattern))
+			which = parseInt(event.options.pattern)
 			element = pat_list[which]
 		}
 
